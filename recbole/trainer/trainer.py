@@ -559,7 +559,7 @@ class Trainer(AbstractTrainer):
             #    flag_x = True
 
 
-            if self.config['model'] in set(['BPR', 'ItemKNN', 'LightGCN']):
+            if self.config['model'] in set(['BPR', 'ItemKNN', 'LightGCN', 'MultiVAE', 'SimpleX']):
                 train_loss = self._train_epoch_origin(train_data, epoch_idx, show_progress=show_progress)
             else:
                 train_loss = self._train_epoch(train_data, epoch_idx, show_progress=show_progress, flag=flag_x)

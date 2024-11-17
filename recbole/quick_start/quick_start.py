@@ -123,21 +123,17 @@ def run_recbole(model=None, dataset=None, config_file_list=None, config_dict=Non
     else:
         train_data, valid_data, test_data = load_split_dataloaders(dataloader_file)
 
-    if train_data.neg_sample_num !=  config['train_neg_sample_args']['by']:
-        train_data.neg_sample_num = config['train_neg_sample_args']['by']
+    train_data.neg_sample_num = config['train_neg_sample_args']['by']
     
     #import pdb; pdb.set_trace()
 
     assert 'train_data_step' in config  # phuongpn edit: comment this line
     #import pdb; pdb.set_trace()
-    if train_data.step != config['train_data_step']:
-        train_data.step = config['train_data_step']
+    train_data.step = config['train_data_step']
 
-    if valid_data.step != config['val_data_step']:
-        valid_data.step = config['val_data_step']
+    valid_data.step = config['val_data_step']
     
-    if test_data.step != config['test_data_step']:
-        test_data.step = config['test_data_step']
+    test_data.step = config['test_data_step']
 
     #import pdb; pdb.set_trace()
 
