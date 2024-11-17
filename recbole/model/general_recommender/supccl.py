@@ -665,7 +665,7 @@ class SUPCCL(GeneralRecommender):
 
                     # add user and her k-nearest neighbors positive pair
                     if self.similar_user_neighbors:
-                        if self.random_strategy:
+                        if self.random_strategy and len(self.user_similar_neighbors_mat[user]) > 0:
                             # the prob_sampling used in self.neighbor_sample controls whether sampling the collaborative neighbors with their probabilities 
                             sample_user, sample_weight = self.neighbor_sample(self.user_similar_neighbors_mat[user], self.user_similar_neighbors_weights_mat[user])
 
@@ -711,7 +711,7 @@ class SUPCCL(GeneralRecommender):
 
                     # add item and its k-nearest neighbors positive pair
                     if self.similar_item_neighbors:
-                        if self.random_strategy:
+                        if self.random_strategy and len(self.item_similar_neighbors_mat[item-self.n_users]) > 0:
                             sample_item, sample_weight = self.neighbor_sample(self.item_similar_neighbors_mat[item-self.n_users], self.item_similar_neighbors_weights_mat[item-self.n_users])
                             sample_item += +self.n_users
 
@@ -821,14 +821,21 @@ class SUPCCL(GeneralRecommender):
                 ssl_loss = -torch.mean(torch.log(pos_score / ttl_score))
             # it corresponds to the supcl-out version, log the sum of the same node
             elif self.positive_cl_type == 2:
+                _n = 0
                 if self.random_strategy:
-                    pos_score = pos_score.reshape(-1, 3)
-                    ttl_score = ttl_score.reshape(-1, 3)
+                    _n = 3
                 else:
-                    pos_score = pos_score.reshape(-1, 2 + self.k)
-                    ttl_score = ttl_score.reshape(-1, 2 + self.k)
+                    _n = 2 + self.k
+
+                pos_score = pos_score[:(pos_score.size(0) // _n) * _n]
+                ttl_score = ttl_score[:(ttl_score.size(0) // _n) * _n]
+
+                pos_score = pos_score.reshape(-1, _n)
+                ttl_score = ttl_score.reshape(-1, _n)
                 ssl_loss = -torch.mean(torch.log(torch.mean(pos_score / ttl_score, dim=1)))
-            
+            else:
+                raise ValueError("Invalid positive_cl_type! positive_cl_type should be in [1, 2].")
+
             ssl_loss = self.ssl_reg * ssl_loss
 
         return ssl_loss
