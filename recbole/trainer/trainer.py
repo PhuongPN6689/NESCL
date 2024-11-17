@@ -566,6 +566,9 @@ class Trainer(AbstractTrainer):
 
             self.train_loss_dict[epoch_idx] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
             print(f'epoch_idx = {epoch_idx}, train_loss: {self.train_loss_dict[epoch_idx]}')
+            if epoch_idx % 10 == 0:
+                test_result = self.evaluate(valid_data, load_best_model=saved, show_progress=False)
+                print(f'epoch_idx = {epoch_idx}, test_result: {test_result}')
             training_end_time = time()
             train_loss_output = \
                 self._generate_train_loss_output(epoch_idx, training_start_time, training_end_time, train_loss)
