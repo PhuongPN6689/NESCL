@@ -211,7 +211,7 @@ def get_tensorboard(config, suffix=None):
     if suffix:
         base_path = "%s/%s" % (base_path, suffix)
 
-    dir_path = '%s/%s-%s-%s' % (base_path, config['model'], config['dataset'], get_local_time)
+    dir_path = '%s/%s-%s-%s' % (base_path, config['model'], config['dataset'], get_local_time())
     writer = SummaryWriter(dir_path)
     return writer
     #if dir_name is None:

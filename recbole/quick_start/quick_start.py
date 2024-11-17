@@ -115,7 +115,7 @@ def run_recbole(model=None, dataset=None, config_file_list=None, config_dict=Non
 
         # dataset splitting
         train_data, valid_data, test_data = data_preparation(config, dataset)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         if config['save_dataloaders']:
             save_split_dataloaders(config, dataloaders=(train_data, valid_data, test_data))
 
@@ -128,7 +128,7 @@ def run_recbole(model=None, dataset=None, config_file_list=None, config_dict=Non
     
     #import pdb; pdb.set_trace()
 
-    assert 'train_data_step' in config
+    assert 'train_data_step' in config  # phuongpn edit: comment this line
     #import pdb; pdb.set_trace()
     if train_data.step != config['train_data_step']:
         train_data.step = config['train_data_step']

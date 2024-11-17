@@ -28,6 +28,7 @@
 5. To train the model, you should first prepare the training environment
 - `pip install -r requirements.txt`
 - `python setup.py build_ext --inplace` (We adopt the C++ evaluator in https://github.com/kuandeng/LightGCN)
+- `cythonize -i recbole/util/cython/random_choice.pyx`
 
 6. Then, you can execute following commands to train the model based on different datasets:
 

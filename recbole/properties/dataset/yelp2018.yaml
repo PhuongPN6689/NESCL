@@ -1,0 +1,103 @@
+# dataset config
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+NEG_PREFIX: neg_
+load_col:
+    inter: [user_id, item_id]
+
+# model config
+embedding_size: 64
+
+# Training and evaluation config
+epochs: 500
+train_data_step: 4096
+val_data_step: 256
+test_data_step: 256
+
+train_batch_size: 4096
+eval_batch_size: 4096
+neg_sampling:
+    uniform: 1
+eval_args:
+    group_by: user
+    order: RO
+    split: {'RS': [0.8,0.1,0.1]}
+    mode: full
+metrics: ['Recall', 'MRR', 'NDCG', 'Hit', 'Precision']
+topk: 20
+valid_metric: Recall@20
+metric_decimal_place: 4
+
+#k: 100
+#method: item
+#enable_average_bias: False
+#renormalize_similarity: False
+
+#save_dataset: True
+#save_dataloaders: True
+
+seed: 2020
+# dataloader_file for tuning hyper-parameters
+#dataloader_file: '/home/peijie/task/RecBole/saved_data/ml-1m-for-BPR-dataloader.pth'
+
+# following parameters are set for NNI hyper-parameters tuning
+#num_aug: 2
+#n_layers: 4
+#reg_weight: 0.01
+
+########################################################################################################################
+
+
+ssl_reg: 0.3
+ssl_ratio: 0.3
+ssl_temp: 0.1
+# ssl_mode: 0-user side, 1-item side, 2-both side, 3-merge
+ssl_mode: 3
+learning_rate: 0.001
+n_layers: 2
+reg_weight: 0.0001
+# aug_type: 0-node dropout, 1-edge dropout, 2-random walk
+aug_type: 0
+
+sub_graph_pool: 300
+ssl_strategy: 9
+# positive_cl_type: 1-'out', 2='in'
+positive_cl_type: 2
+k: 15
+
+lightgcn_flag: False
+random_strategy: True
+augmentation: True
+early_stop: False
+add_initial_embedding: False
+#set_batch_nodes: False
+#add_more_neighbors: False
+pairwise_loss: True
+interacted_neighbors: True
+similar_user_neighbors: True
+similar_item_neighbors: True
+different_view: True
+
+different_view_weight: 1.0
+interacted_neighbors_weight: 1.0
+sample_item_weight: 1.0
+sample_user_weight: 1.0
+
+sample_item_weight_flag: False
+sample_user_weight_flag: False
+
+supcon_flag: False
+
+#renormalize_similarity: True
+prob_sampling: False
+
+## Recall@20, NDCG@20
+#valid_metric: NDCG@20
+#
+#epochs: 300
+#train_data_step: 4096
+#val_data_step: 256
+#test_data_step: 256
+#
+#neg_sampling:
+#    uniform: 1
