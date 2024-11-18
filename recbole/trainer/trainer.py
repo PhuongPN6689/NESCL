@@ -446,14 +446,14 @@ class Trainer(AbstractTrainer):
             print(f"Epoch {epoch_idx} train loss: {self.train_loss_dict[epoch_idx]}")
             if epoch_idx == self.start_epoch:
                 last_average_loss = self.train_loss_dict[epoch_idx]
-            if epoch_idx % 10 == 0 and epoch_idx > self.start_epoch:
+            elif epoch_idx % 10 == 0:
                 _start = max(0, epoch_idx - 10)
                 _end = epoch_idx
                 new_average_loss = sum([self.train_loss_dict[i] for i in range(_start, _end)]) / max(_end - _start, 1)
                 print(f"Average train loss in last 10 epochs: {new_average_loss}, percentage: {100 * (1 - new_average_loss / last_average_loss)}")
 
                 if new_average_loss > last_average_loss and saved:
-                    self._save_checkpoint(epoch_idx, verbose=verbose)
+                    self._save_checkpoint(epoch_idx)
                 last_average_loss = new_average_loss
 
             training_end_time = time()

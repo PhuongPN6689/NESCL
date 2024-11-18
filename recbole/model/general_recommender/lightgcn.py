@@ -108,7 +108,9 @@ class LightGCN(GeneralRecommender):
                 )
             )
         )
-        A._update(data_dict)
+        # A._update(data_dict)
+        for (i, j), w in data_dict.items():
+            A[i, j] = w
         # norm adj matrix
         sumArr = (A > 0).sum(axis=1)
         # add epsilon to avoid divide by zero Warning
