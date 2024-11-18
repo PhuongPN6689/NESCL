@@ -128,7 +128,9 @@ class NCL(GeneralRecommender):
                 )
             )
         )
-        A._update(data_dict)
+        for (i, j), w in data_dict.items():
+            A[i, j] = w
+        # A.update(data_dict)
         # norm adj matrix
         sumArr = (A > 0).sum(axis=1)
         # add epsilon to avoid divide by zero Warning
