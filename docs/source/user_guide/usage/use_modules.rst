@@ -36,7 +36,7 @@ The complete process is as follows:
         train_data, valid_data, test_data = data_preparation(config, dataset)
 
         # model loading and initialization
-        model = BPR(config, train_data).to(config['device'])
+        model = BPR(config, train_data.dataset).to(config['device'])
         logger.info(model)
 
         # trainer loading and initialization
@@ -96,7 +96,7 @@ Model Initialization
 
 .. code:: python
 
-    model = BPR(config, train_data).to(config['device'])
+    model = BPR(config, train_data.dataset).to(config['device'])
 
 Initializing the model according to the model names, and initializing the instance of the model.
 
@@ -127,7 +127,7 @@ trainer class through the model name.
         ...
 
         # model loading and initialization
-        model = get_model(config['model'])(config, train_data).to(config['device'])
+        model = get_model(config['model'])(config, train_data.dataset).to(config['device'])
 
         # trainer loading and initialization
         trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model)
@@ -195,6 +195,9 @@ In this example, we present how to test a model based on the previous saved para
 
         # trainer loading and initialization
         trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model)
+
+        # When calculate ItemCoverage metrics, we need to run this code for set item_nums in eval_collector.
+        trainer.eval_collector.data_collect(train_data)
 
         # model evaluation
         checkpoint_file = 'checkpoint.pth'

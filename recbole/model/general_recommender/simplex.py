@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# @Time   : 2022/01/20
-# @Author : Peijie Sun
-# @Email  : sun.hfut@gmail.com
+# @Time   : 2022/3/25 13:38
+# @Author : HaoJun Qin
+# @Email  : 18697951462@163.com
 
 r"""
 SimpleX
@@ -11,189 +11,246 @@ Reference:
     Kelong Mao et al. "SimpleX: A Simple and Strong Baseline for Collaborative Filtering." in CIKM 2021.
 
 Reference code:
-    https://github.com/xue-pai/TwoTowers
+    https://github.com/xue-pai/TwoToweRS
 """
-
-import numpy as np
-import scipy.sparse as sp
 import torch
-import torch.nn as nn
+from torch import nn
+import torch.nn.functional as F
 
+from recbole.model.init import xavier_normal_initialization
 from recbole.model.abstract_recommender import GeneralRecommender
-from recbole.model.init import xavier_uniform_initialization
-from recbole.model.loss import BPRLoss, EmbLoss
+from recbole.model.loss import EmbLoss
 from recbole.utils import InputType
 
 
 class SimpleX(GeneralRecommender):
-    r"""
-        Introduction of SimpleX 
+    r"""SimpleX is a simple, unified collaborative filtering model.
+
+    SimpleX presents a simple and easy-to-understand model. Its advantage lies
+    in its loss function, which uses a larger number of negative samples and
+    sets a threshold to filter out less informative samples, it also uses
+    relative weights to control the balance of positive-sample loss
+    and negative-sample loss.
+
+    We implement the model following the original author with a pairwise training mode.
     """
+
     input_type = InputType.PAIRWISE
 
     def __init__(self, config, dataset):
         super(SimpleX, self).__init__(config, dataset)
 
-        # load dataset info
-        self.dataset = dataset
-        #self.interaction_matrix = dataset.inter_matrix(form='coo').astype(np.float32)
+        # Get user history interacted items
+        self.history_item_id, _, self.history_item_len = dataset.history_item_matrix(
+            max_history_len=config["history_len"]
+        )
+        self.history_item_id = self.history_item_id.to(self.device)
+        self.history_item_len = self.history_item_len.to(self.device)
 
         # load parameters info
-        self.latent_dim = config['embedding_size']  # int type:the embedding size of UltraGCN
-        self.reg_weight = config['reg_weight']  # float32 type: the weight decay for l2 normalization
-        self.w1 = config['w1']
-        self.w2 = config['w2']
-        self.w3 = config['w3']
-        self.w4 = config['w4']
+        self.embedding_size = config["embedding_size"]
+        self.margin = config["margin"]
+        self.negative_weight = config["negative_weight"]
+        self.gamma = config["gamma"]
+        self.neg_seq_len = config["train_neg_sample_args"]["sample_num"]
+        self.reg_weight = config["reg_weight"]
+        self.aggregator = config["aggregator"]
+        if self.aggregator not in ["mean", "user_attention", "self_attention"]:
+            raise ValueError(
+                "aggregator must be mean, user_attention or self_attention"
+            )
+        self.history_len = torch.max(self.history_item_len, dim=0)
 
-        self.negative_weight = config['negative_weight']
-        self.gamma = config['gamma']
-        self.lambda_ = config['lambda']
-        self.initial_weight = config['initial_weight']
-
-        # define layers and loss
-        self.user_embedding = torch.nn.Embedding(num_embeddings=self.n_users, embedding_dim=self.latent_dim)
-        self.item_embedding = torch.nn.Embedding(num_embeddings=self.n_items, embedding_dim=self.latent_dim)
-        self.mf_loss = BPRLoss()
+        # user embedding matrix
+        self.user_emb = nn.Embedding(self.n_users, self.embedding_size)
+        # item embedding matrix
+        self.item_emb = nn.Embedding(self.n_items, self.embedding_size, padding_idx=0)
+        # feature space mapping matrix of user and item
+        self.UI_map = nn.Linear(self.embedding_size, self.embedding_size, bias=False)
+        if self.aggregator in ["user_attention", "self_attention"]:
+            self.W_k = nn.Sequential(
+                nn.Linear(self.embedding_size, self.embedding_size), nn.Tanh()
+            )
+            if self.aggregator == "self_attention":
+                self.W_q = nn.Linear(self.embedding_size, 1, bias=False)
+        # dropout
+        self.dropout = nn.Dropout(config["dropout_prob"])
+        self.require_pow = config["require_pow"]
+        # l2 regularization loss
         self.reg_loss = EmbLoss()
 
-        self.initial_weights()
+        # parameters initialization
+        self.apply(xavier_normal_initialization)
+        # get the mask
+        self.item_emb.weight.data[0, :] = 0
 
-        train_mat = self.get_ui_constraint_mat()
-        self.get_ii_constraint_mat(train_mat, config['ii_neighbor_num'])
+    def get_UI_aggregation(self, user_e, history_item_e, history_len):
+        r"""Get the combined vector of user and historically interacted items
 
-    def initial_weights(self):
-        nn.init.normal_(self.user_embedding.weight, std=self.initial_weight)
-        nn.init.normal_(self.item_embedding.weight, std=self.initial_weight)
-    
-    def get_ii_constraint_mat(self, train_mat, num_neighbors, ii_diagonal_zero=False):
-        G = train_mat.T.dot(train_mat) # G = A^T * A
-        n_items = G.shape[0]
-        res_mat = torch.zeros((n_items, num_neighbors))
-        res_sim_mat = torch.zeros((n_items, num_neighbors))
-        if ii_diagonal_zero:
-            G[range(n_items), range(n_items)] = 0
-        items_D = np.sum(G, axis=0).reshape(-1)
+        Args:
+            user_e (torch.Tensor): User's feature vector, shape: [user_num, embedding_size]
+            history_item_e (torch.Tensor): History item's feature vector,
+                shape: [user_num, max_history_len, embedding_size]
+            history_len (torch.Tensor): User's history length, shape: [user_num]
 
-        omega_iD = (np.sqrt(items_D + 1) / (items_D + 1)).reshape(-1, 1) # sqrt(g_i)/(g_i - G_{i,i})
-        omega_jD = (1 / np.sqrt(items_D + 1)).reshape(1, -1) # 1/sqrt(g_j)
-        all_ii_constraint_mat = torch.from_numpy(omega_iD.dot(omega_jD)) # (1/(g_i - G_{i,i}))*(sqrt(g_i)/sqrt(g_j))
-        for idx in range(n_items):
-            row = all_ii_constraint_mat[idx] * torch.from_numpy(G.getrow(idx).toarray()[0]) # (G_{i,j}/(g_i - G_{i,i}))*(sqrt(g_i)/sqrt(g_j))
-            row_sims, row_idxs = torch.topk(row, num_neighbors)
-            res_mat[idx] = row_idxs
-            res_sim_mat[idx] = row_sims
-            if idx % 15000 == 0:
-                print('i-i constraint matrix {} ok'.format(idx))
-        print('Computation \\Omega OK!')
-        
-        self.ii_constraint_mat = res_sim_mat.float()
-        self.ii_neighbor_mat = res_mat.long()
+        Returns:
+            torch.Tensor: Combined vector of user and item sequences, shape: [user_num, embedding_size]
+        """
+        if self.aggregator == "mean":
+            pos_item_sum = history_item_e.sum(dim=1)
+            # [user_num, embedding_size]
+            out = pos_item_sum / (history_len + 1.0e-10).unsqueeze(1)
+        elif self.aggregator in ["user_attention", "self_attention"]:
+            # [user_num, max_history_len, embedding_size]
+            key = self.W_k(history_item_e)
+            if self.aggregator == "user_attention":
+                # [user_num, max_history_len]
+                attention = torch.matmul(key, user_e.unsqueeze(2)).squeeze(2)
+            elif self.aggregator == "self_attention":
+                # [user_num, max_history_len]
+                attention = self.W_q(key).squeeze(2)
+            e_attention = torch.exp(attention)
+            mask = (history_item_e.sum(dim=-1) != 0).int()
+            e_attention = e_attention * mask
+            # [user_num, max_history_len]
+            attention_weight = e_attention / (
+                e_attention.sum(dim=1, keepdim=True) + 1.0e-10
+            )
+            # [user_num, embedding_size]
+            out = torch.matmul(attention_weight.unsqueeze(1), history_item_e).squeeze(1)
+        # Combined vector of user and item sequences
+        out = self.UI_map(out)
+        g = self.gamma
+        UI_aggregation_e = g * user_e + (1 - g) * out
+        return UI_aggregation_e
 
-    def get_ui_constraint_mat(self):
-        user_np, item_np = self.dataset.inter_feat.numpy()['user_id'], self.dataset.inter_feat.numpy()['item_id']
+    def get_cos(self, user_e, item_e):
+        r"""Get the cosine similarity between user and item
 
-        train_mat = sp.dok_matrix((self.n_users, self.n_items), dtype=np.float32)
+        Args:
+            user_e (torch.Tensor): User's feature vector, shape: [user_num, embedding_size]
+            item_e (torch.Tensor): Item's feature vector,
+                shape: [user_num, item_num, embedding_size]
 
-        for idx, _ in enumerate(user_np):
-            train_mat[user_np[idx], item_np[idx]] = 1.0
+        Returns:
+            torch.Tensor: Cosine similarity between user and item, shape: [user_num, item_num]
+        """
+        user_e = F.normalize(user_e, dim=1)
+        # [user_num, embedding_size, 1]
+        user_e = user_e.unsqueeze(2)
+        item_e = F.normalize(item_e, dim=2)
+        UI_cos = torch.matmul(item_e, user_e)
+        return UI_cos.squeeze(2)
 
-        items_D = np.sum(train_mat, axis=0).reshape(-1)
-        users_D = np.sum(train_mat, axis=1).reshape(-1)
+    def forward(self, user, pos_item, history_item, history_len, neg_item_seq):
+        r"""Get the loss
 
-        beta_uD = (np.sqrt(users_D + 1) / users_D).reshape(-1, 1)
-        beta_iD = (1 / np.sqrt(items_D + 1)).reshape(1, -1)
+        Args:
+            user (torch.Tensor): User's id, shape: [user_num]
+            pos_item (torch.Tensor): Positive item's id, shape: [user_num]
+            history_item (torch.Tensor): Id of historty item, shape: [user_num, max_history_len]
+            history_len (torch.Tensor): History item's length, shape: [user_num]
+            neg_item_seq (torch.Tensor): Negative item seq's id, shape: [user_num, neg_seq_len]
 
-        constraint_mat = torch.from_numpy(beta_uD.dot(beta_iD))
-        constraint_mat = constraint_mat.flatten()
+        Returns:
+            torch.Tensor: Loss, shape: []
+        """
+        # [user_num, embedding_size]
+        user_e = self.user_emb(user)
+        # [user_num, embedding_size]
+        pos_item_e = self.item_emb(pos_item)
+        # [user_num, max_history_len, embedding_size]
+        history_item_e = self.item_emb(history_item)
+        # [nuser_num, neg_seq_len, embedding_size]
+        neg_item_seq_e = self.item_emb(neg_item_seq)
 
-        self.constraint_mat = constraint_mat
-        return train_mat
+        # [user_num, embedding_size]
+        UI_aggregation_e = self.get_UI_aggregation(user_e, history_item_e, history_len)
+        UI_aggregation_e = self.dropout(UI_aggregation_e)
 
-    def get_betas(self, users, pos_items, neg_items):
-        if self.w2 > 0:
-            pos_weight = self.constraint_mat[users * self.n_items + pos_items].to(self.device)
-            pow_weight = self.w1 + self.w2 * pos_weight
-        else:
-            pos_weight = self.w1 * torch.ones(len(pos_items)).to(self.device)
-        
-        users = (users * self.n_items).unsqueeze(0)
-        if self.w4 > 0:
-            import pdb; pdb.set_trace()
-            neg_weight = self.constraint_mat[torch.cat([users] * neg_items.size(0)).transpose(1, 0) + neg_items].flatten().to(self.device)
-            neg_weight = self.w3 + self.w4 * neg_weight
-        else:
-            neg_weight = self.w3 * torch.ones(neg_items.size(0) * neg_items.size(0)).to(self.device)
+        pos_cos = self.get_cos(UI_aggregation_e, pos_item_e.unsqueeze(1))
+        neg_cos = self.get_cos(UI_aggregation_e, neg_item_seq_e)
 
-        beta_weights = torch.cat((pow_weight, neg_weight))
-        return beta_weights
+        # CCL loss
+        pos_loss = torch.relu(1 - pos_cos)
+        neg_loss = torch.relu(neg_cos - self.margin)
+        neg_loss = neg_loss.mean(1, keepdim=True) * self.negative_weight
+        CCL_loss = (pos_loss + neg_loss).mean()
 
-    def cal_loss_L(self, users, pos_items, neg_items, beta_weights):
-        user_embeds = self.user_embeds(users)
-        pos_embeds = self.item_embeds(pos_items)
-        neg_embeds = self.item_embeds(neg_items)
+        # l2 regularization loss
+        reg_loss = self.reg_loss(
+            user_e,
+            pos_item_e,
+            history_item_e,
+            neg_item_seq_e,
+            require_pow=self.require_pow,
+        )
 
-        pos_scores = (user_embeds * pos_embeds).sum(dim=-1) # batch_size
-        user_embeds = user_embeds.unsqueeze(1)
-        neg_scores = (user_embeds * neg_embeds).sum(dim=-1) # batch_size * negative_num
-
-        neg_labels = torch.zeros(neg_scores.size()).to(self.device)
-        neg_loss = F.binary_cross_entropy_with_logits(neg_scores, neg_labels, weight = omega_weight[len(pos_scores):].view(neg_scores.size()), reduction='none').mean(dim = -1)
-        
-        pos_labels = torch.ones(pos_scores.size()).to(self.device)
-        pos_loss = F.binary_cross_entropy_with_logits(pos_scores, pos_labels, weight = omega_weight[:len(pos_scores)], reduction='none')
-
-        loss = pos_loss + neg_loss * self.negative_weight
-      
-        return loss.sum()
-
-    def cal_loss_I(self, users, pos_items):
-        neighbor_embeds = self.item_embedding(self.ii_neighbor_mat[pos_items].to(self.device))    # len(pos_items) * num_neighbors * dim
-        sim_scores = self.ii_constraint_mat[pos_items].to(self.device)     # len(pos_items) * num_neighbors
-        user_embeds = self.user_embedding(users).unsqueeze(1)
-        
-        loss = -sim_scores * (user_embeds * neighbor_embeds).sum(dim=-1).sigmoid().log()
-      
-        # loss = loss.sum(-1)
-        return loss.sum()
-
-    def norm_loss(self):
-        loss = 0.0
-        for parameter in self.parameters():
-            loss += torch.sum(parameter ** 2)
-        return loss / 2
+        loss = CCL_loss + self.reg_weight * reg_loss.sum()
+        return loss
 
     def calculate_loss(self, interaction):
-        users = interaction[self.USER_ID]
-        pos_items = interaction[self.ITEM_ID]
-        neg_items = interaction[self.NEG_ITEM_ID]
+        r"""Data processing and call function forward(), return loss
 
-        import pdb; pdb.set_trace()
+        To use SimpleX, a user must have a historical transaction record,
+        a pos item and a sequence of neg items. Based on the RecBole
+        framework, the data in the interaction object is ordered, so
+        we can get the data quickly.
+        """
+        user = interaction[self.USER_ID]
+        pos_item = interaction[self.ITEM_ID]
+        neg_item = interaction[self.NEG_ITEM_ID]
 
-        betas_weight = self.get_betas(users, pos_items, neg_items)
-        
-        loss = self.cal_loss_L(users, pos_items, neg_items, betas_weight)
-        loss += self.gamma * self.norm_loss()
-        loss += self.lambda_ * self.cal_loss_I(users, pos_items)
+        # get the sequence of neg items
+        neg_item_seq = neg_item.reshape((self.neg_seq_len, -1))
+        neg_item_seq = neg_item_seq.T
+        user_number = int(len(user) / self.neg_seq_len)
+        # user's id
+        user = user[0:user_number]
+        # historical transaction record
+        history_item = self.history_item_id[user]
+        # positive item's id
+        pos_item = pos_item[0:user_number]
+        # history_len
+        history_len = self.history_item_len[user]
 
+        loss = self.forward(user, pos_item, history_item, history_len, neg_item_seq)
         return loss
 
     def predict(self, interaction):
         user = interaction[self.USER_ID]
-        item = interaction[self.ITEM_ID]
+        history_item = self.history_item_id[user]
+        history_len = self.history_item_len[user]
+        test_item = interaction[self.ITEM_ID]
 
-        u_embeddings = self.user_embedding(user)
-        i_embeddings = self.item_embedding(item)
-        scores = torch.mul(u_embeddings, i_embeddings).sum(dim=1)
-        return scores
+        # [user_num, embedding_size]
+        user_e = self.user_emb(user)
+        # [user_num, embedding_size]
+        test_item_e = self.item_emb(test_item)
+        # [user_num, max_history_len, embedding_size]
+        history_item_e = self.item_emb(history_item)
+
+        # [user_num, embedding_size]
+        UI_aggregation_e = self.get_UI_aggregation(user_e, history_item_e, history_len)
+
+        UI_cos = self.get_cos(UI_aggregation_e, test_item_e.unsqueeze(1))
+        return UI_cos.squeeze(1)
 
     def full_sort_predict(self, interaction):
         user = interaction[self.USER_ID]
+        history_item = self.history_item_id[user]
+        history_len = self.history_item_len[user]
 
-        # get user embedding from storage variable
-        u_embeddings = self.user_embedding[user]
+        # [user_num, embedding_size]
+        user_e = self.user_emb(user)
+        # [user_num, max_history_len, embedding_size]
+        history_item_e = self.item_emb(history_item)
 
-        # dot with all item embedding to accelerate
-        scores = torch.matmul(u_embeddings, self.item_embedding.weight.transpose(0, 1))
+        # [user_num, embedding_size]
+        UI_aggregation_e = self.get_UI_aggregation(user_e, history_item_e, history_len)
 
-        return scores.view(-1)
+        UI_aggregation_e = F.normalize(UI_aggregation_e, dim=1)
+        all_item_emb = self.item_emb.weight
+        all_item_emb = F.normalize(all_item_emb, dim=1)
+        UI_cos = torch.matmul(UI_aggregation_e, all_item_emb.T)
+        return UI_cos

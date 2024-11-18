@@ -15,4 +15,7 @@ to give a detailed introduction about RecBole's features.
    usage/save_and_load_data_and_model
    usage/case_study
    usage/use_tensorboard
+   usage/use_weights_and_biases
    usage/qa
+   usage/significance_test
+   usage/run_recbole_group
