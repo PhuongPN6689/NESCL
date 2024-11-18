@@ -548,7 +548,7 @@ class Trainer(AbstractTrainer):
             self._save_checkpoint(-1)
 
         self.eval_collector.data_collect(train_data)
-
+        last_average_loss = 1000000
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
@@ -566,10 +566,17 @@ class Trainer(AbstractTrainer):
 
             self.train_loss_dict[epoch_idx] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
             print(f"Epoch {epoch_idx} train loss: {self.train_loss_dict[epoch_idx]}")
-            if epoch_idx % 10 == 0 and epoch_idx > 0:
-                __start_epoch = max(0, epoch_idx - 10)
-                __end_epoch = epoch_idx
-                print(f"Average train loss in last 10 epochs: {sum([self.train_loss_dict[i] for i in range(__start_epoch, __end_epoch)]) / max(__end_epoch - __start_epoch, 1)}")
+            if epoch_idx == self.start_epoch:
+                last_average_loss = self.train_loss_dict[epoch_idx]
+            elif epoch_idx % 10 == 0:
+                _start = max(0, epoch_idx - 10)
+                _end = epoch_idx
+                new_average_loss = sum([self.train_loss_dict[i] for i in range(_start, _end)]) / max(_end - _start, 1)
+                print(f"Average train loss in last 10 epochs: {new_average_loss}, percentage: {100 * (1 - new_average_loss / last_average_loss)}")
+
+                if new_average_loss > last_average_loss and saved:
+                    self._save_checkpoint(epoch_idx)
+                last_average_loss = new_average_loss
             if epoch_idx % 10 == 0:
                 test_result = self.evaluate(valid_data, load_best_model=saved, show_progress=False)
                 print(f'epoch_idx = {epoch_idx}, test_result: {test_result}')
