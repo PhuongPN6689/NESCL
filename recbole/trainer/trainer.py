@@ -565,7 +565,11 @@ class Trainer(AbstractTrainer):
                 train_loss = self._train_epoch(train_data, epoch_idx, show_progress=show_progress, flag=flag_x)
 
             self.train_loss_dict[epoch_idx] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
-            print(f'epoch_idx = {epoch_idx}, train_loss: {self.train_loss_dict[epoch_idx]}')
+            print(f"Epoch {epoch_idx} train loss: {self.train_loss_dict[epoch_idx]}")
+            if epoch_idx % 10 == 0 and epoch_idx > 0:
+                __start_epoch = max(0, epoch_idx - 10)
+                __end_epoch = epoch_idx
+                print(f"Average train loss in last 10 epochs: {sum([self.train_loss_dict[i] for i in range(__start_epoch, __end_epoch)]) / max(__end_epoch - __start_epoch, 1)}")
             if epoch_idx % 10 == 0:
                 test_result = self.evaluate(valid_data, load_best_model=saved, show_progress=False)
                 print(f'epoch_idx = {epoch_idx}, test_result: {test_result}')
